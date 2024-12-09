@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "self-learning"
+version = "0.1.0"
+description = ""
+authors = ["Nhan Nguyen <nhan.nguyen@27global.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+openai = "^1.57.0"
+langchain = "^0.3.10"
+fastapi = "^0.115.6"
+uvicorn = "^0.32.1"
+gunicorn = "^23.0.0"
+chromadb = "^0.5.23"
+black = "^24.10.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
