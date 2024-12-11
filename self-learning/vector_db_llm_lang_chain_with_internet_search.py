@@ -62,55 +62,72 @@ def get_answer(query: str):
     all_docs = []
     source_info = []
 
-    # First, try to get answer from local vector database
+    # Check if this is a version-related query
+    is_version_query = any(
+        keyword in query.lower() for keyword in ["version", "latest", "recent"]
+    )
+
+    # For version queries, always check web first
+    if is_version_query:
+        try:
+            search = DuckDuckGoSearchRun()
+            search_results = search.run(f"latest version {query}")
+            if search_results.strip():
+                web_doc = Document(
+                    page_content=search_results,
+                    metadata={
+                        "source": "web_search (current)",
+                        "date": "current",
+                        "query": query,
+                    },
+                )
+                all_docs.insert(0, web_doc)
+                source_info.append("web search")
+                print("Retrieved latest version information from web search.")
+
+                # Store in vector database to update local information
+                print("Updating version information in database...")
+                vectordb.add_documents([web_doc])
+                print("Successfully updated version information in database.")
+        except Exception as e:
+            print(f"Error searching the internet: {e}")
+
+    # Then check local database
     try:
-        # Using regular similarity search instead of MMR for more stability
         local_docs = vectordb.similarity_search(query, k=3)
         if local_docs:
-            all_docs.extend(local_docs)
-            source_info.append("local database")
-            print("Found relevant documents in local database.")
+            # For version queries, only use local docs as fallback
+            if not is_version_query or not all_docs:
+                all_docs.extend(local_docs)
+                source_info.append("local database")
+                print("Found relevant documents in local database.")
         else:
             print("No relevant documents found in local database.")
 
-            # Only search the internet if no local documents found
-            try:
-                search = DuckDuckGoSearchRun()
-                search_results = search.run(query)
-                if search_results.strip():
-                    # Check if similar content already exists in the database
-                    similar_docs = vectordb.similarity_search(search_results, k=1)
-                    is_duplicate = False
-                    if similar_docs:
-                        similarity_threshold = 0.95  # Adjust this threshold as needed
-                        similar_doc = similar_docs[0]
-                        if similar_doc.page_content.strip() == search_results.strip():
-                            is_duplicate = True
-                            print(
-                                "Web search result already exists in database, skipping storage."
-                            )
+            # Only search internet for non-version queries if nothing found locally
+            if not is_version_query:
+                try:
+                    search = DuckDuckGoSearchRun()
+                    search_results = search.run(query)
+                    if search_results.strip():
+                        web_doc = Document(
+                            page_content=search_results,
+                            metadata={
+                                "source": "web_search (current)",
+                                "date": "current",
+                                "query": query,
+                            },
+                        )
+                        all_docs.insert(0, web_doc)
+                        source_info.append("web search")
+                        print("Retrieved information from web search.")
 
-                    web_doc = Document(
-                        page_content=search_results,
-                        metadata={
-                            "source": "web_search (current)",
-                            "date": "current",
-                            "query": query,
-                        },
-                    )
-
-                    # Store in vector database if it's new content
-                    if not is_duplicate:
+                        # Store in vector database
                         print("Storing new web search result in database...")
                         vectordb.add_documents([web_doc])
                         print("Successfully stored new content in database.")
-
-                    # Add web results to documents list
-                    all_docs.insert(0, web_doc)
-                    source_info.append("web search")
-                    print("Retrieved information from web search.")
-            except Exception as e:
-                print(f"Error searching the internet: {e}")
+                except Exception as e:
+                    print(f"Error searching the internet: {e}")
     except Exception as e:
         print(f"Error retrieving local documents: {e}")
 
@@ -128,8 +145,11 @@ def get_answer(query: str):
         ]
     )
 
-    # Add source information to the query
-    enhanced_query = f"{query}\n\nPlease note: This information is sourced from {', '.join(source_info)}. Prioritize the most recent information and explicitly mention the date of the information if available."
+    # Enhance the query to emphasize current version information for version queries
+    if is_version_query:
+        enhanced_query = f"{query}\n\nPlease note: This information is sourced from {', '.join(source_info)}. Focus on the most recent version number and release date. If multiple versions are mentioned, specify the latest one. Start your response with '[Source: {', '.join(source_info)}]'."
+    else:
+        enhanced_query = f"{query}\n\nPlease note: This information is sourced from {', '.join(source_info)}. Prioritize the most recent information and explicitly mention the date of the information if available. Start your response with '[Source: {', '.join(source_info)}]'."
 
     response = chain.invoke({"context": context, "input": enhanced_query})
     return response
