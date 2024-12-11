@@ -25,10 +25,6 @@ from packaging import version
 # Suppress SSL verification warnings
 warnings.filterwarnings("ignore", message="Unverified HTTPS request")
 
-# Set USER_AGENT environment variable
-os.environ["USER_AGENT"] = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-)
 
 load_dotenv()
 

@@ -66,7 +66,6 @@ def search_web_version(query: str) -> str:
         ]
 
         loader = WebBaseLoader(
-        loader = WebBaseLoader(
             search_urls,
             verify_ssl=False,
             header_template={"User-Agent": os.environ.get("USER_AGENT")},
