@@ -72,24 +72,47 @@ def get_answer(query: str):
             print("Found relevant documents in local database.")
         else:
             print("No relevant documents found in local database.")
+
+            # Only search the internet if no local documents found
+            try:
+                search = DuckDuckGoSearchRun()
+                search_results = search.run(query)
+                if search_results.strip():
+                    # Check if similar content already exists in the database
+                    similar_docs = vectordb.similarity_search(search_results, k=1)
+                    is_duplicate = False
+                    if similar_docs:
+                        similarity_threshold = 0.95  # Adjust this threshold as needed
+                        similar_doc = similar_docs[0]
+                        if similar_doc.page_content.strip() == search_results.strip():
+                            is_duplicate = True
+                            print(
+                                "Web search result already exists in database, skipping storage."
+                            )
+
+                    web_doc = Document(
+                        page_content=search_results,
+                        metadata={
+                            "source": "web_search (current)",
+                            "date": "current",
+                            "query": query,
+                        },
+                    )
+
+                    # Store in vector database if it's new content
+                    if not is_duplicate:
+                        print("Storing new web search result in database...")
+                        vectordb.add_documents([web_doc])
+                        print("Successfully stored new content in database.")
+
+                    # Add web results to documents list
+                    all_docs.insert(0, web_doc)
+                    source_info.append("web search")
+                    print("Retrieved information from web search.")
+            except Exception as e:
+                print(f"Error searching the internet: {e}")
     except Exception as e:
         print(f"Error retrieving local documents: {e}")
-
-    # Always search the internet to get the most recent information
-    try:
-        search = DuckDuckGoSearchRun()
-        search_results = search.run(query)
-        if search_results.strip():
-            web_doc = Document(
-                page_content=search_results,
-                metadata={"source": "web_search (current)", "date": "current"},
-            )
-            # Prioritize web results by adding them first
-            all_docs.insert(0, web_doc)
-            source_info.append("web search")
-            print("Retrieved information from web search.")
-    except Exception as e:
-        print(f"Error searching the internet: {e}")
 
     if not all_docs:
         return "I apologize, but I couldn't find any relevant information from either local documents or web search."
@@ -100,7 +123,7 @@ def get_answer(query: str):
     # Format the context with clear source and date information
     context = "\n\n".join(
         [
-            f"[Source: {doc.metadata.get('source', 'unknown')}, Date: {doc.metadata.get('date', 'unknown')}]\n{doc.page_content}"
+            f"[Source: {doc.metadata.get('source', 'unknown')}, Date: {doc.metadata.get('date', 'unknown')}, Query: {doc.metadata.get('query', 'unknown')}]\n{doc.page_content}"
             for doc in all_docs
         ]
     )
@@ -114,7 +137,8 @@ def get_answer(query: str):
 
 # Example usage
 queries = [
-    "Which latst version of Databricks Runtime?",
+    "Which latst version of FastAPI framework?",
+    # "Which latst version of Databricks Runtime?",
     # "Talk about databricks new?",
     # "What are the latest developments in AI?",
     # "Tell me about recent machine learning frameworks",
