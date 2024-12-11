@@ -2,6 +2,8 @@ import os
 import json
 import requests
 import re
+import warnings
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -19,6 +21,14 @@ from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 import chromadb
 from packaging import version
+
+# Suppress SSL verification warnings
+warnings.filterwarnings("ignore", message="Unverified HTTPS request")
+
+# Set USER_AGENT environment variable
+os.environ["USER_AGENT"] = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
 load_dotenv()
 
@@ -61,9 +71,12 @@ system_prompt = (
     "Use the following pieces of retrieved context to answer the question. "
     "If information is found from multiple sources (local documents and web), "
     "combine them to provide a comprehensive answer. "
-    "Always prioritize recent information. "
-    "If the information seems outdated, mention that in your response. "
-    "Keep the answer concise but informative."
+    "For version-related queries:"
+    "1. Compare version numbers from different sources"
+    "2. Only report a version if it's confirmed by multiple sources"
+    "3. Include the release date if available"
+    "4. If sources conflict, mention the discrepancy"
+    "5. If the version information seems outdated, explicitly mention that"
     "\n\n"
     "Context: {context}"
 )
@@ -123,6 +136,54 @@ except Exception as e:
     )
 
 
+def extract_version_info(text):
+    """Extract version numbers and dates from text."""
+    version_pattern = r"(?:version|v)?\.?\s*(\d+\.\d+\.\d+(?:-?\w+)?)"
+    date_pattern = r"(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\w+ \d{1,2},? \d{4})"
+
+    versions = re.findall(version_pattern, text, re.IGNORECASE)
+    dates = re.findall(date_pattern, text)
+
+    return versions, dates
+
+
+def validate_version_freshness(content):
+    """Validate if the version information is recent and consistent."""
+    versions, dates = extract_version_info(content)
+
+    if not versions:
+        return False, "No version information found"
+
+    # Convert versions to tuples of integers for comparison
+    version_tuples = []
+    for v in versions:
+        try:
+            # Remove any pre-release suffixes for comparison
+            clean_version = re.match(r"(\d+\.\d+\.\d+)", v).group(1)
+            version_parts = [int(x) for x in clean_version.split(".")]
+            version_tuples.append((version_parts, v))
+        except (AttributeError, ValueError):
+            continue
+
+    if not version_tuples:
+        return False, "Could not parse version numbers"
+
+    # Sort versions and get the latest
+    version_tuples.sort(reverse=True)
+    latest_version = version_tuples[0][1]
+
+    # Check if we have multiple sources with the same version
+    version_count = sum(1 for v in version_tuples if v[0] == version_tuples[0][0])
+
+    if version_count < 2:
+        return (
+            False,
+            f"Version {latest_version} found but not confirmed by multiple sources",
+        )
+
+    return True, f"Latest version {latest_version} confirmed by multiple sources"
+
+
 def get_fastapi_version():
     try:
         response = requests.get("https://pypi.org/pypi/fastapi/json")
@@ -139,26 +200,55 @@ def get_fastapi_version():
 
 
 def get_web_content(query):
-    """Get information from web sources."""
+    """Get information from web sources with validation."""
     try:
-        # Use search URLs that are likely to have up-to-date information
+        # First attempt with regular search
         search_urls = [
-            f"https://www.google.com/search?q={query}+latest+version",
-            f"https://www.bing.com/search?q={query}+latest+version",
-            f"https://duckduckgo.com/html?q={query}+latest+version",
+            f"https://www.google.com/search?q={query}+latest+version+release",
+            f"https://www.bing.com/search?q={query}+latest+version+release",
+            f"https://duckduckgo.com/html?q={query}+latest+version+release",
         ]
 
         loader = WebBaseLoader(
             search_urls,
-            verify_ssl=False,  # Some sites might have SSL issues
-            header_template={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-            },
+            verify_ssl=False,
+            header_template={"User-Agent": os.environ.get("USER_AGENT")},
         )
         docs = loader.load()
 
         # Combine all web content
         combined_content = "\n".join([doc.page_content for doc in docs])
+
+        # Validate version information
+        is_valid, message = validate_version_freshness(combined_content)
+
+        if not is_valid:
+            print(f"Initial validation: {message}")
+            print("Checking additional sources...")
+
+            # Try additional sources with different search patterns
+            additional_urls = [
+                f"https://www.google.com/search?q={query}+changelog+latest",
+                f"https://www.bing.com/search?q={query}+release+notes+latest",
+                f"https://duckduckgo.com/html?q={query}+github+latest+release",
+            ]
+
+            additional_loader = WebBaseLoader(
+                additional_urls,
+                verify_ssl=False,
+                header_template={"User-Agent": os.environ.get("USER_AGENT")},
+            )
+            additional_docs = additional_loader.load()
+
+            # Combine with original content
+            combined_content += "\n" + "\n".join(
+                [doc.page_content for doc in additional_docs]
+            )
+
+            # Revalidate with combined content
+            is_valid, message = validate_version_freshness(combined_content)
+            print(f"Final validation: {message}")
+
         return combined_content
     except Exception as e:
         print(f"Error fetching web content: {e}")
@@ -289,7 +379,7 @@ def get_answer(query: str):
 
 # Example usage
 queries = [
-    # "Which latest version of FastAPI framework?",
+    "Which latest version of FastAPI python package?",
     "Which latest version of Uvicorn python package?",
     # "Which latst version of Databricks Runtime?",
     # "Talk about databricks new?",
