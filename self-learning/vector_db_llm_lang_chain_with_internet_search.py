@@ -64,12 +64,14 @@ def get_answer(query: str):
 
     # First, try to get answer from local vector database
     try:
-        # Using similarity search with MMR for better diversity in results
-        local_docs = vectordb.max_marginal_relevance_search(query, k=3, fetch_k=10)
+        # Using regular similarity search instead of MMR for more stability
+        local_docs = vectordb.similarity_search(query, k=3)
         if local_docs:
             all_docs.extend(local_docs)
             source_info.append("local database")
             print("Found relevant documents in local database.")
+        else:
+            print("No relevant documents found in local database.")
     except Exception as e:
         print(f"Error retrieving local documents: {e}")
 
@@ -80,9 +82,10 @@ def get_answer(query: str):
         if search_results.strip():
             web_doc = Document(
                 page_content=search_results,
-                metadata={"source": "web_search", "date": "current"},
+                metadata={"source": "web_search (current)", "date": "current"},
             )
-            all_docs.append(web_doc)
+            # Prioritize web results by adding them first
+            all_docs.insert(0, web_doc)
             source_info.append("web search")
             print("Retrieved information from web search.")
     except Exception as e:
@@ -94,16 +97,16 @@ def get_answer(query: str):
     # Create the QA chain
     chain = prompt | model | StrOutputParser()
 
-    # Format the context and query
+    # Format the context with clear source and date information
     context = "\n\n".join(
         [
-            f"[Source: {doc.metadata.get('source', 'unknown')}]\n{doc.page_content}"
+            f"[Source: {doc.metadata.get('source', 'unknown')}, Date: {doc.metadata.get('date', 'unknown')}]\n{doc.page_content}"
             for doc in all_docs
         ]
     )
 
     # Add source information to the query
-    enhanced_query = f"{query} (Information sourced from: {', '.join(source_info)})"
+    enhanced_query = f"{query}\n\nPlease note: This information is sourced from {', '.join(source_info)}. Prioritize the most recent information and explicitly mention the date of the information if available."
 
     response = chain.invoke({"context": context, "input": enhanced_query})
     return response
