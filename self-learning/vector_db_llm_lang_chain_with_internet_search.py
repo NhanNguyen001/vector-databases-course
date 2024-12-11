@@ -111,7 +111,7 @@ def get_answer(query: str):
 
 # Example usage
 queries = [
-    "Which latst version of databricks?",
+    "Which latst version of Databricks Runtime?",
     # "Talk about databricks new?",
     # "What are the latest developments in AI?",
     # "Tell me about recent machine learning frameworks",
